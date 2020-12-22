@@ -1,0 +1,5 @@
+#配置解析 会被apollo覆盖
+
+server:
+  port: 20293
+
