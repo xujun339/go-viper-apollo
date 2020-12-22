@@ -4,5 +4,6 @@
 
 ## 使用方式
 ``初始化配置viper_helper.InitLocalConfig("config")``
-###config目录下的config.properties是配置的根配置，会去判断是否需要启动apollo
+### config目录下的config.properties是配置的根配置，会去判断是否需要启动apollo 
+``viper.remoteprovider.apollo.enable = true``
 ``获取配置viper_helper.Configmap["logging-level"].GetViper().AllSettings()``
