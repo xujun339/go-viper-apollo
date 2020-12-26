@@ -69,13 +69,12 @@ func (pollTask *PollTask) Start() error {
 	if !pollTask.start.CAS(false, true) {
 		return errors.New("请勿重复启动pollTask")
 	}
-	syncPoll := func() {
-		NotificationsGet(pollTask, true)
+	syncPoll := func() error {
+		return NotificationsGet(pollTask, true)
 	}
 
 	// 先主动请求一次
-	syncPoll()
-	return nil
+	return syncPoll()
 }
 
 func (pollTask *PollTask) StartPoll() error {

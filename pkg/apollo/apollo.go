@@ -59,8 +59,8 @@ func toPollTaskConf(srv *ApolloSrv) *PollConfig {
 	}
 }
 
-func (srv *ApolloSrv) Start() {
-	srv.pollTask.Start()
+func (srv *ApolloSrv) Start() error {
+	return srv.pollTask.Start()
 }
 
 func (srv *ApolloSrv) StartPoll() {

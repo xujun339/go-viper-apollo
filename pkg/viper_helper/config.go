@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"github.com/gin-sasuke/sasuke/pkg/apollo"
 	"github.com/gin-sasuke/sasuke/pkg/file_helper"
+	"github.com/gin-sasuke/sasuke/pkg/string_helper"
 	"github.com/pkg/errors"
 	"github.com/spf13/viper"
-
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,9 +26,11 @@ func(that Config) GetViper() *viper.Viper {
 }
 
 var (
-	Configmap map[string]Config = make(map[string]Config) // 配置map ，每个nameSpace对应一个配置
+	Configmap = make(map[string]Config) // 配置map ，每个nameSpace对应一个配置
 	namespaceNameInitChan = make(map[string]watchEventResp)
 	namespaceNamePollChan = make(map[string]chan apollo.WatchEvent)
+	// 读取命令行的
+	apolloConfigService = ""
 )
 
 type watchEventResp struct {
@@ -61,6 +63,18 @@ func (l Logg) Error(format string) {
 }
 
 /**
+初始化apollo的地址，方便配合flag或者cobra在启动的命令行设置apollo地址
+ */
+func InitApolloUrl(apolloUrl string)  {
+	apolloConfigService = apolloUrl
+}
+
+func SupportConfigType(fileType string) bool {
+	Supported := []string{"properties", "yml"}
+	return string_helper.StringInSlice(fileType, Supported)
+}
+
+/**
  	 变量逃逸
  */
 func InitLocalConfig(configPath string) error {
@@ -72,7 +86,7 @@ func InitLocalConfig(configPath string) error {
 	if !isDir {
 		return errors.New("非文件目录")
 	}
-	filepath.Walk(configPath, func(path string, info os.FileInfo, err error) error {
+	walkErr := filepath.Walk(configPath, func(path string, info os.FileInfo, err error) error {
 		if configPath != path && !info.IsDir() {
 			filePrex, fileExt := file_helper.FileBaseAndExt(path)
 			if _, ok := Configmap[filePrex]; ok {
@@ -84,6 +98,9 @@ func InitLocalConfig(configPath string) error {
 				return errors.New(fmt.Sprintf("%s 未找到后缀", path))
 			}
 			fileExtSpil := fileExt[1:]
+			if !SupportConfigType(fileExtSpil) {
+				return errors.New(fmt.Sprintf("%s 不支持的格式，support properties, yml", path))
+			}
 
 			viperInstance := viper.New()
 			viperInstance.AddConfigPath(configPath)
@@ -93,6 +110,7 @@ func InitLocalConfig(configPath string) error {
 			if err != nil {
 				return errors.Wrapf(err, "%s read in config fail", path)
 			}
+
 			Configmap[filePrex] = Config{
 				fileName:   filePrex+fileExt,
 				fileType:  ToFileType(fileExtSpil),
@@ -104,6 +122,10 @@ func InitLocalConfig(configPath string) error {
 		return nil
 	})
 
+	if walkErr != nil {
+		return errors.WithMessage(walkErr, "本地文件遍历")
+	}
+
 	//for _, v := range Configmap {
 	//	fmt.Println(v.viper.AllSettings())
 	//}
@@ -112,13 +134,23 @@ func InitLocalConfig(configPath string) error {
 	if cf,ok := Configmap["config"]; ok {
 		enableApollo := cf.viper.GetBool("viper.remoteprovider.apollo.enable")
 		if enableApollo {
-			ConfigServerUrl := cf.viper.GetString("viper.remoteprovider.apollo.configService")
+			var ConfigServerUrl = ""
+			if apolloConfigService != "" {
+				ConfigServerUrl = apolloConfigService
+			} else {
+				ConfigServerUrl = cf.viper.GetString("viper.remoteprovider.apollo.configService")
+			}
 			AppId := cf.viper.GetString("viper.remoteprovider.apollo.appid")
 			ClusterName := cf.viper.GetString("viper.remoteprovider.apollo.clusterName")
 			namespaceNames := cf.viper.GetString("viper.remoteprovider.apollo.namespaceNames")
 			namespaceNameSlice := RemoveReplicaSliceString(strings.Split(namespaceNames, ","))
-			// 去重切分
-
+			// 去重判断格式
+			for _, namespaceName := range namespaceNameSlice {
+				namespaceNameList := strings.Split(namespaceName, ".")
+				if len(namespaceNameList) == 2 && !SupportConfigType(namespaceNameList[1]) {
+					return errors.New(fmt.Sprintf("apolo namespace:%s 格式暂且不支持，support properties, yml", namespaceName))
+				}
+			}
 
 			// 定义初始化配置的接受chan
 			for _, namespaceName := range namespaceNameSlice {
@@ -141,7 +173,11 @@ func InitLocalConfig(configPath string) error {
 			}
 
 			srv := apollo.New(ConfigServerUrl, AppId, namespaceNameSlice, ClusterName, poolHandle, initHandle, Logg{})
-			srv.Start()
+			startErr := srv.Start()
+			if startErr != nil {
+				return errors.WithMessage(startErr, "apollo启动失败")
+			}
+
 			viper.RemoteConfig = ApolloRemote{}
 
 			for _, namespaceName := range namespaceNameSlice {

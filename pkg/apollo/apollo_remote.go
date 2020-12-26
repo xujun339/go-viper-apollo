@@ -97,6 +97,12 @@ func NotificationsGet(pollTask *PollTask, isInit bool) error {
 		// 处理配置变化的方法
 		// 批量发出更新事件
 		pollTask.logger.Info("获取最新配置")
+		if isInit {
+			// 判断配置中的namespace是否在apollo不存在
+			if len(rtNameSpaceSlice) != len(pollTask.namespaceNames) {
+				return errors.New("apollo 未获取到期望的namespace， 检查配置viper.remoteprovider.apollo.namespaceNames")
+			}
+		}
 		for _, value := range rtNameSpaceSlice {
 			errGet := NocacheGet(pollTask, value.NamespaceName, value.NotificationId, isInit)
 			if errGet != nil {
