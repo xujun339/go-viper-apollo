@@ -2,42 +2,42 @@ package viper_helper
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
 	"github.com/gin-sasuke/sasuke/pkg/apollo"
 	"github.com/gin-sasuke/sasuke/pkg/file_helper"
 	"github.com/gin-sasuke/sasuke/pkg/string_helper"
 	"github.com/pkg/errors"
 	"github.com/spf13/viper"
-	"os"
-	"path/filepath"
-	"strings"
 )
 
 type Config struct {
-	fileName string
-	fileType FileType
-	namespace string
+	fileName   string
+	fileType   FileType
+	namespace  string
 	sourceType SourceType
-	viper *viper.Viper
+	viper      *viper.Viper
 }
 
-func(that Config) GetViper() *viper.Viper {
+func (that Config) GetViper() *viper.Viper {
 	return that.viper
 }
 
 var (
-	Configmap = make(map[string]Config) // 配置map ，每个nameSpace对应一个配置
+	Configmap             = make(map[string]Config) // 配置map ，每个nameSpace对应一个配置
 	namespaceNameInitChan = make(map[string]*apollo.WatchEvent)
 	namespaceNamePollChan = make(map[string]chan apollo.WatchEvent)
 	// 读取命令行的
 	apolloConfigService = ""
-	logger Logg
+	logger              Logg
 )
-
 
 /**
 初始化apollo的地址，方便配合flag或者cobra在启动的命令行设置apollo地址
- */
-func InitApolloUrl(apolloUrl string)  {
+*/
+func InitApolloUrl(apolloUrl string) {
 	apolloConfigService = apolloUrl
 }
 
@@ -48,7 +48,7 @@ func SupportConfigType(fileType string) bool {
 
 /**
 接收初始化的回调
- */
+*/
 func initHandel(watchEvents []*apollo.WatchEvent) error {
 	err := _initHandel(watchEvents)
 	if err != nil {
@@ -83,8 +83,8 @@ func _initHandel(watchEvents []*apollo.WatchEvent) error {
 		}
 		logger.Info("create config " + watchEvent.NamespaceName)
 		Configmap[filePrex] = Config{
-			fileName:  watchEvent.NamespaceName,
-			fileType:  fileType,
+			fileName:   watchEvent.NamespaceName,
+			fileType:   fileType,
 			namespace:  filePrex,
 			sourceType: REMOTE_APOLLO,
 			viper:      viperInstance,
@@ -98,19 +98,19 @@ func _initHandel(watchEvents []*apollo.WatchEvent) error {
 }
 
 /**
-	长轮训的事件watch
- */
+长轮训的事件watch
+*/
 func poolHandle(watchEvent apollo.WatchEvent) error {
 	namespaceNamePollChan[watchEvent.NamespaceName] <- watchEvent
 	return nil
 }
 
 /**
- 	 变量逃逸
- */
+变量逃逸
+*/
 func InitLocalConfig(configPath string) error {
 	// 解析目录文件
-	isDir,err := file_helper.IsDirOrFile(configPath)
+	isDir, err := file_helper.IsDirOrFile(configPath)
 	if err != nil {
 		return err
 	}
@@ -143,8 +143,8 @@ func InitLocalConfig(configPath string) error {
 			}
 
 			Configmap[filePrex] = Config{
-				fileName:   filePrex+fileExt,
-				fileType:  ToFileType(fileExtSpil),
+				fileName:   filePrex + fileExt,
+				fileType:   ToFileType(fileExtSpil),
 				namespace:  filePrex,
 				sourceType: LOCAL_FILE,
 				viper:      viperInstance,
@@ -157,45 +157,19 @@ func InitLocalConfig(configPath string) error {
 		return errors.WithMessage(walkErr, "本地文件遍历")
 	}
 
-	// 开始加载远程配置 (apollo)
-	if cf,ok := Configmap["config"]; ok {
-		enableApollo := cf.viper.GetBool("viper.remoteprovider.apollo.enable")
-		if enableApollo {
-			var ConfigServerUrl = ""
-			if apolloConfigService != "" {
-				ConfigServerUrl = apolloConfigService
-			} else {
-				ConfigServerUrl = cf.viper.GetString("viper.remoteprovider.apollo.configService")
-			}
-			AppId := cf.viper.GetString("viper.remoteprovider.apollo.appid")
-			ClusterName := cf.viper.GetString("viper.remoteprovider.apollo.clusterName")
-			namespaceNames := cf.viper.GetString("viper.remoteprovider.apollo.namespaceNames")
-			namespaceNameSlice := RemoveReplicaSliceString(strings.Split(namespaceNames, ","))
-			// 去重判断格式
-			for _, namespaceName := range namespaceNameSlice {
-				namespaceNameList := strings.Split(namespaceName, ".")
-				if len(namespaceNameList) == 2 && !SupportConfigType(namespaceNameList[1]) {
-					return errors.New(fmt.Sprintf("apolo namespace:%s 格式暂且不支持，support properties, yml", namespaceName))
-				}
-			}
-
-			// 定义初始化配置的接受chan
-			for _, namespaceName := range namespaceNameSlice {
-				namespaceNamePollChan[namespaceName] = make(chan apollo.WatchEvent, 512)
-			}
-			viper.RemoteConfig = ApolloRemote{}
-
-			srv := apollo.New(ConfigServerUrl, AppId, namespaceNameSlice, ClusterName, Logg{})
-			srv.SubscribeStart(initHandel)
-			srv.SubscribeLongPoll(poolHandle)
-
-			startErr := srv.Start()
-			if startErr != nil {
-				return errors.WithMessage(startErr, "apollo启动失败")
-			}
-		}
-	}
 	// 如果和本地文件冲突的话，会进行覆盖
+	return nil
+}
+
+func StartApollo(srv *apollo.ApolloSrv) error {
+	//srv := apollo.New(Logg{})
+	//srv.SubscribeStart(initHandel)
+	//srv.SubscribeLongPoll(poolHandle)
+
+	startErr := srv.Start()
+	if startErr != nil {
+		return errors.WithMessage(startErr, "apollo启动失败")
+	}
 	return nil
 }
 
@@ -213,4 +187,3 @@ func RemoveReplicaSliceString(slc []string) []string {
 	}
 	return result
 }
-

@@ -9,37 +9,43 @@ import (
 
 var (
 	initNotificationId = -1
-	spilCode = ","
-	once sync.Once
-	AplloSrvInstance *ApolloSrv
-	poolInterval = 2 * time.Second
+	spilCode           = ","
+	once               sync.Once
+	AplloSrvInstance   *ApolloSrv
+	poolInterval       = 2 * time.Second
+	apolloConfig       ApolloConfig
 )
 
 type ApolloSrv struct {
 	// namespaceName
-	namespaceNames []string
-	mutex sync.RWMutex
+	namespaceNames  []string
+	mutex           sync.RWMutex
 	configServerUrl string
-	appId string
-	clusterName string
-	lastPullTime time.Time
-	logger ApolloLogInterface
-	pollTask *PollTask
-
+	appId           string
+	clusterName     string
+	lastPullTime    time.Time
+	logger          ApolloLogInterface
+	pollTask        *PollTask
 }
 
+func (this *ApolloSrv) AddYMLConfig(namespace string) {
+	this.namespaceNames = append(this.namespaceNames, namespace+"yml")
+}
 
+func (this *ApolloSrv) AddConfig(namespace string) {
+	this.namespaceNames = append(this.namespaceNames, namespace)
+}
 
-func New(configServerUrl string, appId string, namespaceNames []string, clusterName string, log ApolloLogInterface) *ApolloSrv {
-	if namespaceNames == nil || len(namespaceNames) <=0 {
-		panic("namespaceNames 不能为空")
-	}
+func New(log ApolloLogInterface) *ApolloSrv {
+	// if namespaceNames == nil || len(namespaceNames) <= 0 {
+	// 	panic("namespaceNames 不能为空")
+	// }
 	once.Do(func() {
 		v := new(ApolloSrv)
-		v.namespaceNames = namespaceNames
-		v.configServerUrl = configServerUrl
-		v.appId = appId
-		v.clusterName = clusterName
+		v.namespaceNames = []string{}
+		v.configServerUrl = apolloConfig.uri
+		v.appId = apolloConfig.AppId
+		v.clusterName = apolloConfig.Cluster
 		v.mutex = sync.RWMutex{}
 		v.logger = log
 		pollConf := toPollTaskConf(v)
@@ -60,6 +66,7 @@ func toPollTaskConf(srv *ApolloSrv) *PollConfig {
 }
 
 func (srv *ApolloSrv) Start() error {
+	
 	return srv.pollTask.Start()
 }
 
@@ -74,7 +81,3 @@ func (srv *ApolloSrv) SubscribeStart(fn initNotificationHandler) error {
 func (srv *ApolloSrv) SubscribeLongPoll(fn notificationHandler) error {
 	return srv.pollTask.SubscribeLongPoll(fn)
 }
-
-
-
-

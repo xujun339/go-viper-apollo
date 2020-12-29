@@ -1,21 +1,35 @@
 package main
 
 import (
-	"flag"
 	"fmt"
-	"github.com/gin-sasuke/sasuke/pkg/viper_helper"
 	"time"
+
+	"github.com/gin-sasuke/sasuke/pkg/apollo"
+	"github.com/gin-sasuke/sasuke/pkg/viper_helper"
 )
 
 func main() {
-	var apolloUrl string
-	flag.StringVar(&apolloUrl, "apollo", "", "apllo地址")
-	flag.Parse()
-	viper_helper.InitApolloUrl(apolloUrl)
+	//var apolloUrl string
+	//flag.StringVar(&apolloUrl, "apollo", "", "apllo地址")
+	//flag.Parse()
+	//viper_helper.InitApolloUrl(apolloUrl)
+	/*
+		//InitApollo()
+		//BuildConfig("aa","yml")
+		//BuildConfig("bb","json")
+		//GetApolloConfig()
+		//InitWatcher()
+		//
+	*/
 
-	if initConfigErr := viper_helper.InitLocalConfig("config"); initConfigErr != nil {
+	apollo.InitViperConfig("config", "properties", "config")
+	srv := apollo.New(viper_helper.Logg{})
+	srv.AddYMLConfig("application")
+	srv.AddConfig("db")
+	if initConfigErr := viper_helper.StartApollo(srv); initConfigErr != nil {
 		fmt.Println(initConfigErr)
 	} else {
+
 		go func() {
 			timer1 := time.NewTicker(1 * time.Second)
 			for {
@@ -26,8 +40,5 @@ func main() {
 		}()
 	}
 
-
-	select {
-
-	}
+	select {}
 }
