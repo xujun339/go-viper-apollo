@@ -83,7 +83,10 @@ func InitnamespaceNames(namespaceNames []string) map[string]int {
 	初始化的时候拉取 , 并阻塞等待事件处理
  */
 func (pollTask *PollTask) syncPoll(ctx context.Context) error {
-	NotificationsGet(pollTask, true)
+	err := NotificationsGet(pollTask, true)
+	if err != nil {
+		return errors.WithMessage(err, "start poll fail")
+	}
 	ctx, _ = context.WithTimeout(ctx, ApolloFirstPollWaitTimeout)
 	waitErr := pollTask.syncPollWait(ctx)
 	return waitErr
