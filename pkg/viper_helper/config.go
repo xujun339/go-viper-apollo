@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 type Config struct {
@@ -27,40 +26,13 @@ func(that Config) GetViper() *viper.Viper {
 
 var (
 	Configmap = make(map[string]Config) // 配置map ，每个nameSpace对应一个配置
-	namespaceNameInitChan = make(map[string]watchEventResp)
+	namespaceNameInitChan = make(map[string]*apollo.WatchEvent)
 	namespaceNamePollChan = make(map[string]chan apollo.WatchEvent)
 	// 读取命令行的
 	apolloConfigService = ""
+	logger Logg
 )
 
-type watchEventResp struct {
-	WatchEventChan chan apollo.WatchEvent
-	Bytes []byte
-}
-
-type Logg struct {
-
-}
-
-func (l Logg) Debug(format string) {
-	format = time.Now().Format("2006-01-02 15:04:05.000") + "    " + format
-	fmt.Println(format)
-}
-
-func (l Logg) Info(format string) {
-	format = time.Now().Format("2006-01-02 15:04:05.000") + "    " + format
-	fmt.Println(format)
-}
-
-func (l Logg) Warn(format string) {
-	format = time.Now().Format("2006-01-02 15:04:05.000") + "    " + format
-	fmt.Println(format)
-}
-
-func (l Logg) Error(format string) {
-	format = time.Now().Format("2006-01-02 15:04:05.000") + "    " + format
-	fmt.Println(format)
-}
 
 /**
 初始化apollo的地址，方便配合flag或者cobra在启动的命令行设置apollo地址
@@ -72,6 +44,65 @@ func InitApolloUrl(apolloUrl string)  {
 func SupportConfigType(fileType string) bool {
 	Supported := []string{"properties", "yml"}
 	return string_helper.StringInSlice(fileType, Supported)
+}
+
+/**
+接收初始化的回调
+ */
+func initHandel(watchEvents []*apollo.WatchEvent) error {
+	err := _initHandel(watchEvents)
+	if err != nil {
+		logger.Error(err.Error())
+	}
+	return err
+}
+
+func _initHandel(watchEvents []*apollo.WatchEvent) error {
+	for _, watchEventCp := range watchEvents {
+		namespaceNameInitChan[watchEventCp.NamespaceName] = watchEventCp
+	}
+
+	for _, watchEvent := range watchEvents {
+		// 初始化
+		viperInstance := viper.New()
+		viperInstance.AddRemoteProvider("consul", watchEvent.NamespaceName, watchEvent.NamespaceName)
+		var fileType FileType
+		var filePrex string
+		if strings.HasSuffix(watchEvent.NamespaceName, ".yml") {
+			viperInstance.SetConfigType("yml")
+			filePrex = strings.TrimSuffix(watchEvent.NamespaceName, ".yml")
+			fileType = YML
+		} else {
+			viperInstance.SetConfigType("json")
+			fileType = JSON
+			filePrex = watchEvent.NamespaceName
+		}
+		err := viperInstance.ReadRemoteConfig()
+		if err != nil {
+			return errors.Wrapf(err, "%s read in config fail", watchEvent.NamespaceName)
+		}
+		logger.Info("create config " + watchEvent.NamespaceName)
+		Configmap[filePrex] = Config{
+			fileName:  watchEvent.NamespaceName,
+			fileType:  fileType,
+			namespace:  filePrex,
+			sourceType: REMOTE_APOLLO,
+			viper:      viperInstance,
+		}
+		go func() {
+			viperInstance.WatchRemoteConfigOnChannel()
+		}()
+	}
+
+	return nil
+}
+
+/**
+	长轮训的事件watch
+ */
+func poolHandle(watchEvent apollo.WatchEvent) error {
+	namespaceNamePollChan[watchEvent.NamespaceName] <- watchEvent
+	return nil
 }
 
 /**
@@ -126,10 +157,6 @@ func InitLocalConfig(configPath string) error {
 		return errors.WithMessage(walkErr, "本地文件遍历")
 	}
 
-	//for _, v := range Configmap {
-	//	fmt.Println(v.viper.AllSettings())
-	//}
-
 	// 开始加载远程配置 (apollo)
 	if cf,ok := Configmap["config"]; ok {
 		enableApollo := cf.viper.GetBool("viper.remoteprovider.apollo.enable")
@@ -156,76 +183,19 @@ func InitLocalConfig(configPath string) error {
 			for _, namespaceName := range namespaceNameSlice {
 				namespaceNamePollChan[namespaceName] = make(chan apollo.WatchEvent, 512)
 			}
+			viper.RemoteConfig = ApolloRemote{}
 
-			initHandle := func(watchEvent apollo.WatchEvent) error {
-				wteChan := make(chan apollo.WatchEvent, 1)
-				wteChan <- watchEvent
-				namespaceNameInitChan[watchEvent.NamespaceName] = watchEventResp{
-					WatchEventChan: wteChan,
-					Bytes: watchEvent.Bytes,
-				}
-				return nil
-			}
+			srv := apollo.New(ConfigServerUrl, AppId, namespaceNameSlice, ClusterName, Logg{})
+			srv.SubscribeStart(initHandel)
+			srv.SubscribeLongPoll(poolHandle)
 
-			poolHandle := func(watchEvent apollo.WatchEvent) error {
-				namespaceNamePollChan[watchEvent.NamespaceName] <- watchEvent
-				return nil
-			}
-
-			srv := apollo.New(ConfigServerUrl, AppId, namespaceNameSlice, ClusterName, poolHandle, initHandle, Logg{})
 			startErr := srv.Start()
 			if startErr != nil {
 				return errors.WithMessage(startErr, "apollo启动失败")
 			}
-
-			viper.RemoteConfig = ApolloRemote{}
-
-			for _, namespaceName := range namespaceNameSlice {
-				// 循环初始化配置
-				select {
-				case event := <-namespaceNameInitChan[namespaceName].WatchEventChan :
-					namespaceNameInitChan[event.NamespaceName] = watchEventResp{
-						WatchEventChan: nil,
-						Bytes:          event.Bytes,
-					}
-					// 初始化
-					viperInstance := viper.New()
-					viperInstance.AddRemoteProvider("consul", event.NamespaceName, event.NamespaceName)
-					var fileType FileType
-					var filePrex string
-					if strings.HasSuffix(namespaceName, ".yml") {
-						viperInstance.SetConfigType("yml")
-						filePrex = strings.TrimSuffix(namespaceName, ".yml")
-						fileType = YML
-					} else {
-						viperInstance.SetConfigType("json")
-						fileType = JSON
-						filePrex = namespaceName
-					}
-					err := viperInstance.ReadRemoteConfig()
-					if err != nil {
-						return errors.Wrapf(err, "%s read in config fail", namespaceNames)
-					}
-					Configmap[filePrex] = Config{
-						fileName:   namespaceName,
-						fileType:  fileType,
-						namespace:  filePrex,
-						sourceType: REMOTE_APOLLO,
-						viper:      viperInstance,
-					}
-					go func() {
-						viperInstance.WatchRemoteConfigOnChannel()
-					}()
-
-				}
-			}
-
-			// 开始长轮训
-			srv.StartPoll()
 		}
 	}
 	// 如果和本地文件冲突的话，会进行覆盖
-
 	return nil
 }
 

@@ -13,6 +13,7 @@ type WatchEvent struct {
 
 // 注册的回调函数
 type notificationHandler func(watchEvent WatchEvent) error
+type initNotificationHandler func(watchEvent []*WatchEvent) error
 
 func DefaultNotificationHandler (watchEvent WatchEvent) error {
 	fmt.Println(watchEvent.NamespaceName)

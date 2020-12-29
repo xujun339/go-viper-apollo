@@ -30,7 +30,7 @@ type ApolloSrv struct {
 
 
 
-func New(configServerUrl string, appId string, namespaceNames []string, clusterName string,handler notificationHandler, initHandler notificationHandler, log ApolloLogInterface) *ApolloSrv {
+func New(configServerUrl string, appId string, namespaceNames []string, clusterName string, log ApolloLogInterface) *ApolloSrv {
 	if namespaceNames == nil || len(namespaceNames) <=0 {
 		panic("namespaceNames 不能为空")
 	}
@@ -43,7 +43,7 @@ func New(configServerUrl string, appId string, namespaceNames []string, clusterN
 		v.mutex = sync.RWMutex{}
 		v.logger = log
 		pollConf := toPollTaskConf(v)
-		v.pollTask = NewPollConfig(pollConf, handler,initHandler, log)
+		v.pollTask = NewPollConfig(pollConf, log)
 		AplloSrvInstance = v
 	})
 
@@ -65,6 +65,14 @@ func (srv *ApolloSrv) Start() error {
 
 func (srv *ApolloSrv) StartPoll() {
 	srv.pollTask.StartPoll()
+}
+
+func (srv *ApolloSrv) SubscribeStart(fn initNotificationHandler) error {
+	return srv.pollTask.SubscribeStart(fn)
+}
+
+func (srv *ApolloSrv) SubscribeLongPoll(fn notificationHandler) error {
+	return srv.pollTask.SubscribeLongPoll(fn)
 }
 
 
