@@ -22,38 +22,33 @@ type NocacheResponse struct {
 
 // 请求无缓存接口
 // URL: {config_server_url}/configs/{appId}/{clusterName}/{namespaceName}?releaseKey={releaseKey}&ip={clientIp}
-func NocacheGet(pollTask *PollTask, nameSpaceName string, notificationId int, isInit bool) error {
+func NocacheGet(pollTask *PollTask, nameSpaceName string, notificationId int) (*WatchEvent, error) {
 	requestURL := fmt.Sprintf("%s/configs/%s/%s/%s", pollTask.Config.ConfigServerUrl, pollTask.Config.AppId, pollTask.Config.ClusterName, nameSpaceName)
 	response, error := pollTask.HttpRequest.Request(requestURL)
 	if error != nil {
-		return errors.WithMessage(error, "notifications 请求notifications失败")
+		return nil, errors.WithMessage(error, "notifications 请求notifications失败")
 	}
 	// 判断http状态
 	if response.StatusCode == 200 {
 		body,err := ioutil.ReadAll(response.Body)
 		if err != nil {
-			return errors.WithMessage(err, "notifications 请求notifications失败")
+			return nil, errors.WithMessage(err, "notifications 请求notifications失败")
 		}
 		nocacheResp := NocacheResponse{}
 		if unmarshalErr := json.Unmarshal(body, &nocacheResp); unmarshalErr != nil {
-			return errors.WithMessagef(unmarshalErr, "获取无缓存接口 返回格式错误：%s", string(body))
+			return nil, errors.WithMessagef(unmarshalErr, "获取无缓存接口 返回格式错误：%s", string(body))
 		}
 		byteSlice,marshalErr := json.Marshal(nocacheResp.Configurations);
 		if marshalErr != nil {
-			return errors.WithMessagef(err, "获取无缓存接口 返回格式错误：%s", string(body))
+			return nil, errors.WithMessagef(err, "获取无缓存接口 返回格式错误：%s", string(body))
 		}
 		watchEvent := WatchEvent{
 			NamespaceName: nameSpaceName,
 			Bytes: byteSlice,
 		}
-		if isInit {
-			pollTask.initHandler(watchEvent)
-		} else {
-			pollTask.handler(watchEvent)
-		}
-		pollTask.namespaceNames[nameSpaceName] = notificationId
+		return &watchEvent, nil
 	}
-	return nil
+	return nil, nil
 }
 
 // 请求nameSpace是否有变化
@@ -103,11 +98,25 @@ func NotificationsGet(pollTask *PollTask, isInit bool) error {
 				return errors.New("apollo 未获取到期望的namespace， 检查配置viper.remoteprovider.apollo.namespaceNames")
 			}
 		}
+		var startEvents  = make([]*WatchEvent, 0, len(rtNameSpaceSlice))
 		for _, value := range rtNameSpaceSlice {
-			errGet := NocacheGet(pollTask, value.NamespaceName, value.NotificationId, isInit)
+			// 循环构建一个eventList数据包过去
+			watchEvent, errGet := NocacheGet(pollTask, value.NamespaceName, value.NotificationId)
 			if errGet != nil {
 				pollTask.logger.Error(errGet.Error())
 			}
+			if watchEvent!=nil {
+				if isInit {
+					startEvents = append(startEvents, watchEvent)
+				} else {
+					pollTask.bus.Publish(ApolloLongPollTopic, *watchEvent)
+				}
+				pollTask.namespaceNames[value.NamespaceName] = value.NotificationId
+			}
+		}
+		if isInit && len(startEvents) > 0 {
+			// 组装批量事件
+			pollTask.bus.Publish(ApolloFirstPollTopic, startEvents)
 		}
 
 	}
